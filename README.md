@@ -1,92 +1,135 @@
 # Economic Indicators Dashboard
 
-A React dashboard backed by a FastAPI service for viewing selected Indian economic indicators and market-index snapshots. The backend collects and stores provider data; authenticated browser requests read those stored snapshots. The project is intended to make a compact set of public economic series easier to browse, with source dates and stale-data states visible where available.
+A web dashboard for exploring selected Indian and global economic indicators alongside a market-index ticker. A React frontend reads authenticated snapshots from a FastAPI backend; backend collectors validate and store provider data in SQLite on a schedule.
 
-> This README documents the implementation in this repository. Upstream availability, data freshness, and hosted deployment have not been independently verified here.
+## Live deployment
+
+| Resource | URL |
+| --- | --- |
+| Dashboard | [economic-indicators-dashboard-amber.vercel.app](https://economic-indicators-dashboard-amber.vercel.app/) |
+| Backend API | [economic-indicators-api-y72p.onrender.com](https://economic-indicators-api-y72p.onrender.com) |
+| Health check | [API `/health`](https://economic-indicators-api-y72p.onrender.com/health) |
+| GitHub repository | [Ripusudan01/economic-indicators-dashboard](https://github.com/Ripusudan01/economic-indicators-dashboard) |
+
+The URLs above are the deployment addresses supplied for this project. The repository configures the API to disable interactive documentation in production, so `/docs` and `/redoc` are not available in production mode.
 
 ## Contents
 
-- [Features](#features)
-- [Screenshots and demo](#screenshots-and-demo)
-- [Technology stack](#technology-stack)
+- [Overview](#overview)
+- [Screenshots](#screenshots)
+- [Features and indicators](#features-and-indicators)
+- [Data sources and methodology](#data-sources-and-methodology)
 - [Architecture](#architecture)
+- [Technology stack](#technology-stack)
 - [Repository structure](#repository-structure)
-- [Prerequisites and local setup](#prerequisites-and-local-setup)
-- [Configuration reference](#configuration-reference)
-- [Data sources and collection behavior](#data-sources-and-collection-behavior)
-- [Scheduler and refresh semantics](#scheduler-and-refresh-semantics)
-- [API documentation](#api-documentation)
+- [How collection and refresh work](#how-collection-and-refresh-work)
 - [Authentication and security](#authentication-and-security)
-- [Testing and code quality](#testing-and-code-quality)
-- [Known limitations and future improvements](#known-limitations-and-future-improvements)
+- [Prerequisites and local setup](#prerequisites-and-local-setup)
+- [Environment variables](#environment-variables)
+- [API reference](#api-reference)
+- [Database and persistence](#database-and-persistence)
+- [Tests and validation](#tests-and-validation)
+- [Production deployment](#production-deployment)
+- [Troubleshooting](#troubleshooting)
+- [Known limitations and future work](#known-limitations-and-future-work)
 - [Contributing, license, and acknowledgements](#contributing-license-and-acknowledgements)
 
-## Features
+## Overview
 
-The protected dashboard provides six indicator panels:
+The dashboard brings a set of economic series into one interface: GDP growth, public-debt ratios, trade, GST collections, inflation, government-finance measures, and selected market indices. It provides historical snapshots, source attribution, observation and fetch dates, chart summaries, and stale or unavailable states where the source data permits.
 
-1. **GDP growth** — India and world annual growth series.
-2. **Inflation** — India CPI inflation series and a displayed 4% RBI target reference.
-3. **Government debt** — IMF general-government gross debt as a percentage of GDP, with India and US series.
-4. **Government expenditure** — World Bank government-finance series presented as total, revenue-proxy, and capital-proxy expenditure.
-5. **GST revenue** — curated annual totals and a limited monthly series, with year-over-year values.
-6. **Trade** — imports, exports, and a derived trade balance.
+The browser communicates with the backend API. It does not call economic data providers directly. Indicator and ticker API requests read stored snapshots; refreshing the dashboard re-reads those snapshots and does not necessarily trigger a new upstream collection.
 
-The interface also includes a SENSEX, NIFTY BANK, and NIFTY IT ticker; login and protected dashboard access; charts and tooltips; and loading, empty, error, unavailable, and stale-data states. Indicator freshness is based on observation age, while fetch time is shown separately. A failed refresh retains previously stored valid observations where collector logic supports it.
+## Screenshots
 
-## Screenshots and demo
+There is no verified screenshot of the running application in the repository. The file [`extracted_figma_ref_0.png`](extracted_figma_ref_0.png) is an assignment design reference, not an application screenshot. Add a real screenshot here after capturing the deployed or locally running dashboard.
 
-The repository includes [`extracted_figma_ref_0.png`](extracted_figma_ref_0.png), an assignment design-reference export. It is not a screenshot of the running application. Add verified application screenshots here when they are available.
+## Features and indicators
 
-- Hosted demo: **not configured**
-- Submission, portfolio, or recording links: **not configured**
+The authenticated dashboard contains six indicator panels:
 
-## Technology stack
-
-| Area | Technologies in the project |
+| Panel | What it shows |
 | --- | --- |
-| Frontend | React 19, Vite 8, Axios, React Router package, Oxlint |
-| Charts | Recharts |
-| Backend/API | Python, FastAPI, Pydantic Settings, Uvicorn, HTTPX |
-| Database | SQLite via Python `sqlite3` |
-| Authentication | `python-jose` JWT signing, bcrypt password hashing, refresh-token hashes stored by the backend |
-| Scheduling | APScheduler (`AsyncIOScheduler`) |
-| Market data | `yfinance` / Yahoo Finance daily bars |
-| Tests | pytest; frontend lint and Vite production build scripts |
+| **GDP growth** | Annual India growth alongside a world comparison. |
+| **Inflation** | India CPI inflation and a configured 4% RBI target reference. |
+| **Government debt** | IMF general-government gross debt as a percentage of GDP for India and the US. |
+| **Government expenditure** | World Bank government-finance observations presented as total, revenue-proxy, and capital-proxy expenditure. |
+| **GST collections** | Curated annual collections and a limited monthly series, including derived year-over-year changes. |
+| **Trade** | Imports, exports, and a calculated trade balance. |
 
-The backend dependencies are pinned in `backend/requirements.txt`; pytest is declared in `backend/requirements-dev.txt`. Frontend dependency ranges and scripts are in `frontend/package.json` and the npm lockfile.
+The page also provides:
+
+- SENSEX, NIFTY BANK, and NIFTY IT ticker cards using Yahoo Finance daily bars.
+- Login-protected dashboard and indicator/ticker API access.
+- Charts, tooltips, loading, empty, error, stale, and unavailable states.
+- Observation dates separate from backend fetch times where the provider date is available.
+- Scheduled backend collection and snapshot persistence in SQLite.
+
+The ticker is not described as real-time: its Yahoo Finance daily bars may be delayed and expose a date rather than a verified intraday quote time.
+
+## Data sources and methodology
+
+Sources and transformations below reflect the current collector code. The application does not certify that a provider is available or that its latest values have been independently validated.
+
+| Data | Configured source | Frequency and handling |
+| --- | --- | --- |
+| GDP growth | [World Bank API](https://api.worldbank.org/v2/country/IN/indicator/NY.GDP.MKTP.KD.ZG?format=json&mrv=10), indicator `NY.GDP.MKTP.KD.ZG`, India and World. | Annual percentage observations, up to ten recent values. |
+| Government debt | [IMF WEO DataMapper](https://www.imf.org/external/datamapper/api/v1/GGXWDG_NGDP/IND/USA), indicator `GGXWDG_NGDP`. | Annual gross general-government debt (% GDP), India and US. The endpoint provides year/value pairs but no reliable actual/estimate classification. Future calendar years are marked projections; current and elapsed years are not reliably classified and may include estimates. API `as_of` excludes future projections. |
+| Imports and exports | [World Bank exports](https://api.worldbank.org/v2/country/IN/indicator/NE.EXP.GNFS.CD?format=json&mrv=10) (`NE.EXP.GNFS.CD`) and [imports](https://api.worldbank.org/v2/country/IN/indicator/NE.IMP.GNFS.CD?format=json&mrv=10) (`NE.IMP.GNFS.CD`). | Annual current USD series are converted to USD billions. Trade balance is derived as exports minus imports; it is not a separate source observation. |
+| GST collections | Curated values attributed to [PIB / Ministry of Finance](https://www.pib.gov.in/PressNoteDetails.aspx?ModuleId=3&NoteId=154789&id=154789&lang=2&reg=3). | Static annual totals from FY2020–21 to FY2024–25; monthly values from April 2024 through February 2025. No live provider fetch occurs. The annual monthly line uses annual total divided by 12, an average proxy rather than observed months. |
+| Inflation | [World Bank CPI inflation](https://api.worldbank.org/v2/country/IN/indicator/FP.CPI.TOTL.ZG?format=json&mrv=10), indicator `FP.CPI.TOTL.ZG`; application attribution also references MOSPI. | Annual CPI inflation percentage. The 4% RBI target is a configured comparison value, not a collected series. |
+| Government expenditure | [World Bank expense](https://api.worldbank.org/v2/country/IN/indicator/GC.XPN.TOTL.GD.ZS?format=json&mrv=10), `GC.XPN.TOTL.GD.ZS`, and net investment in nonfinancial assets, `GC.NFN.TOTL.GD.ZS`. | Annual % GDP. “Revenue expenditure” is proxied by general-government expense; “capital expenditure” by net investment in nonfinancial assets; displayed total is their sum. This is not the Union Budget’s direct revenue/capital split. |
+| Market ticker | Yahoo Finance via `yfinance`: `^BSESN`, `^NSEBANK`, `^CNXIT`; source attribution links to [Yahoo Finance](https://finance.yahoo.com). | Requests five days of daily bars. Observation dates are not verified intraday timestamps. Quotes may be delayed; this is not an official NSE/BSE feed. |
+
+Economic freshness uses observation age rather than fetch time alone: annual observations become stale after 550 days and monthly observations after 62 days. Ticker observations with missing, invalid, future, or more than three-calendar-day-old dates are stale. A recent Yahoo daily bar is still labelled delayed. Collector errors preserve prior valid data where the collector supports it; a successful API read does not prove the upstream source supplied new data.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  Browser[React dashboard] -->|Authenticated GET requests and polling| API[FastAPI]
-  Browser -->|Login, refresh, logout| API
-  API -->|Read latest stored snapshots| DB[(SQLite)]
-  Scheduler[APScheduler in backend process] -->|Scheduled collector calls| Collectors[Indicator and ticker collectors]
-  Collectors -->|HTTP or yfinance provider requests| Sources[World Bank, IMF, PIB/MoF references, Yahoo Finance]
-  Collectors -->|Validate and persist snapshots| DB
+  Browser[React dashboard on Vercel] -->|HTTPS API requests and polling| API[FastAPI on Render]
+  Browser -->|Login and token operations| API
+  API -->|Read latest snapshots| DB[(SQLite file)]
+  Scheduler[APScheduler in backend process] --> Collectors[Six indicator collectors and ticker collector]
+  Collectors -->|HTTP / yfinance requests| Providers[World Bank, IMF, curated PIB/MoF series, Yahoo Finance]
+  Collectors -->|Validate and persist observations| DB
 ```
 
-The browser reads backend snapshots. Dashboard reload and panel retry repeat API reads; they do not request a collector run. The backend scheduler independently runs collectors and writes snapshots to SQLite. A successful API response therefore confirms that the API returned a response, not that the upstream provider supplied new data during that request.
+The API serves records from SQLite. APScheduler runs inside the backend process and collects separately from browser requests. The frontend’s ticker polling and dashboard reload are not collector triggers.
+
+## Technology stack
+
+| Area | Implementation |
+| --- | --- |
+| Frontend | React 19, Vite 8, Axios |
+| Charts | Recharts |
+| Backend | Python, FastAPI, Pydantic Settings, Uvicorn, HTTPX |
+| Database | SQLite using Python `sqlite3` |
+| Authentication | bcrypt password hashes and HS256 JWTs (`python-jose`); hashed, rotating refresh tokens |
+| Scheduling | APScheduler `AsyncIOScheduler` |
+| Ticker provider | `yfinance` / Yahoo Finance |
+| Frontend lint | Oxlint |
+| Backend tests | pytest |
+
+`react-router-dom` appears in the frontend dependency manifest, but the current [`App.jsx`](frontend/src/App.jsx) does not use React Router: it selects login or dashboard based on authentication state. Oxlint is the linter invoked by `npm run lint`.
 
 ## Repository structure
 
 ```text
 .
 ├── assignment.pdf
-├── extracted_figma_ref_0.png
+├── extracted_figma_ref_0.png       # assignment design reference, not app screenshot
 ├── README.md
 ├── backend/
 │   ├── app/
-│   │   ├── auth/                 # login, JWT and refresh-token handling
-│   │   ├── collectors/           # six indicator collectors, ticker and scheduler
-│   │   ├── models/schemas.py     # API response models
-│   │   ├── routers/              # health, indicators and ticker endpoints
-│   │   ├── utils/                # HTTP client and freshness rules
+│   │   ├── auth/                   # login, JWT and refresh-token logic
+│   │   ├── collectors/             # six indicators, ticker, scheduler, validation
+│   │   ├── models/schemas.py       # API response schemas
+│   │   ├── routers/                # health, indicator, ticker endpoints
+│   │   ├── utils/                  # HTTP client and freshness rules
 │   │   ├── config.py
 │   │   ├── database.py
-│   │   └── main.py               # FastAPI application and startup
+│   │   └── main.py                 # FastAPI entry point and lifespan
 │   ├── db/schema.sql
 │   ├── tests/
 │   ├── requirements.txt
@@ -96,44 +139,70 @@ The browser reads backend snapshots. Dashboard reload and panel retry repeat API
     ├── src/
     │   ├── api/
     │   ├── auth/
-    │   └── components/           # layout, indicator panels and chart UI
+    │   └── components/             # authentication, layout, panels and charts
+    ├── tests/
     ├── package.json
+    ├── package-lock.json
     └── vite.config.js
 ```
 
-Runtime databases, environment files, `node_modules`, virtual environments, and build output are local/generated and excluded by `.gitignore`.
+The repository has no `.env.example`, `render.yaml`, `vercel.json`, `LICENSE`, or GitHub Actions workflow. Local `.env` files, SQLite files, Python environments, `node_modules`, and frontend build output are ignored by Git.
+
+## How collection and refresh work
+
+When `SCHEDULER_ENABLED=true`, the backend runs an initial collection after startup, then schedules six daily collector jobs in UTC:
+
+| Collector | UTC | India Standard Time (UTC+05:30) |
+| --- | --- | --- |
+| GDP growth | 02:00 | 07:30 |
+| Debt-to-GDP | 02:30 | 08:00 |
+| Trade | 03:00 | 08:30 |
+| GST | 03:30 | 09:00 |
+| Inflation | 04:00 | 09:30 |
+| Government expenditure | 04:30 | 10:00 |
+
+The ticker collector runs on its own `TICKER_REFRESH_SECONDS` interval (30 seconds by default). The frontend separately polls `GET /ticker` every 30 seconds. Dashboard “Reload data” and panel retry re-read stored API snapshots and do not force upstream collection.
+
+Collectors use bounded provider request timeouts. On Render Free, the service can sleep while idle, so in-process scheduled jobs do not run while the service is stopped. Startup collection runs again when it wakes. Render Free uses an ephemeral filesystem; see [database persistence](#database-and-persistence).
+
+## Authentication and security
+
+`POST /auth/login` accepts a username and password. Passwords are bcrypt-hashed. The API issues HS256 access JWTs (30-minute default) and refresh tokens (7-day default); refresh tokens are stored as hashes, rotated on use, and can be revoked. Protected indicator and ticker requests use an `Authorization: Bearer` header. The frontend stores tokens in browser local storage; deployment should use HTTPS and protect against script injection.
+
+Production startup requires a non-placeholder JWT secret of at least 32 UTF-8 bytes, a non-empty evaluator username, an evaluator password of 16–72 UTF-8 bytes with at least three character classes, and HTTPS CORS origins. JWT algorithm is restricted to HS256. Login limiting allows five failed attempts per client IP per rolling minute **per backend process**; it is in memory and is not shared between multiple workers.
+
+Never place secrets in Vite variables: every `VITE_` variable is embedded into browser code. Do not commit `.env` files or database files.
 
 ## Prerequisites and local setup
 
-Use Python 3.10 or later (the source uses modern Python type syntax), Node.js compatible with Vite 8, and npm. Exact Python and Node patch versions are not pinned in repository metadata.
+- Python 3.10 or later; no exact Python version is pinned by this repository.
+- Node.js compatible with Vite 8 (Vite 8 requires Node 20.19+ or 22.12+); npm.
+- Git.
 
-### Backend
+### Backend setup
 
-In PowerShell, from the repository root:
+PowerShell, from the repository root:
 
 ```powershell
 cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-```
-
-The backend creates or migrates its SQLite schema on startup. With the default `DATABASE_URL`, start the application from `backend/` so the relative SQLite file is `backend/db/indicators.db`:
-
-```powershell
+python -m pip install -r requirements-dev.txt
 $env:APP_ENV = "development"
-$env:JWT_SECRET_KEY = "replace-with-a-private-local-key-at-least-32-bytes"
+$env:JWT_SECRET_KEY = "replace-with-a-private-key-at-least-32-bytes"
 $env:EVALUATOR_USERNAME = "evaluator"
 $env:EVALUATOR_PASSWORD = "set-a-private-local-password"
 $env:SCHEDULER_ENABLED = "false"
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Set `EVALUATOR_PASSWORD` to a private value in your shell; do not put a real credential in this README, source control, or shared terminal transcript. The application seeds the evaluator account on startup only when both evaluator settings are supplied. Set `SCHEDULER_ENABLED=true` to enable background collection (including startup collection).
+For macOS/Linux, create/activate the environment with `python -m venv .venv` and `source .venv/bin/activate`, then set the same variables in the shell before running `python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`.
 
-### Frontend
+The backend initializes the SQLite schema on startup. Its default database URL is relative to the backend working directory, so start Uvicorn from `backend/` for the default `backend/db/indicators.db` location. Set `SCHEDULER_ENABLED=true` to enable the initial and scheduled collectors.
 
-In a second PowerShell terminal, from the repository root:
+### Frontend setup
+
+In another terminal, from the repository root:
 
 ```powershell
 cd frontend
@@ -142,150 +211,178 @@ $env:VITE_API_BASE_URL = "http://localhost:8000"
 npm run dev
 ```
 
-Vite serves the development UI at `http://localhost:5173` by default. The API listens at `http://127.0.0.1:8000`; the frontend API client uses a 10-second request timeout. For production builds, `VITE_API_BASE_URL` is compiled into the bundle and must use HTTPS.
+For macOS/Linux, use `export VITE_API_BASE_URL=http://localhost:8000` before `npm run dev`. Vite uses port `5173` by default. The API base URL is compiled into the frontend; production builds require HTTPS.
 
-No `.env.example` file is present. Configure variables in the current PowerShell session as shown above or create a private, ignored local `.env` based on the variable reference below. Backend settings load `.env` from the backend process working directory. Never commit `.env` files, database files, or credentials.
+There is no `.env.example`. The commands above use shell-session values and placeholders; replace the local password with a private value. Backend settings load `.env` from the backend process working directory if you choose to create a local ignored file.
 
-## Configuration reference
+## Environment variables
 
-Defaults below are from the settings model. “Required in production” describes startup validation; development behavior may still require a value for a feature to work (for example, login needs evaluator credentials).
+Backend names/defaults come from [`backend/app/config.py`](backend/app/config.py). Values marked production-required are enforced when `APP_ENV=production`.
 
-| Variable | Purpose | Default | Required in production? |
+| Variable | Purpose | Default / example format | Required |
 | --- | --- | --- | --- |
-| `APP_ENV` | Runtime mode and production validation; production disables interactive API docs. | `development` | No |
-| `JWT_SECRET_KEY` | HS256 signing key. Production rejects the placeholder and requires at least 32 UTF-8 bytes. | `CHANGE_ME_IN_PRODUCTION` | Yes |
-| `JWT_ALGORITHM` | JWT algorithm; configuration accepts HS256. | `HS256` | No, but must remain `HS256` |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | Access-token lifetime. | `30` | No |
-| `REFRESH_TOKEN_EXPIRE_DAYS` | Refresh-token lifetime. | `7` | No |
-| `DATABASE_URL` | SQLite database URL. The database is backend-only. | `sqlite:///./db/indicators.db` | No; production must provide private persistent storage operationally |
-| `CORS_ORIGINS` | Comma-separated allowed browser origins. Production validation requires HTTPS origins. | `http://localhost:5173` | Yes, set the deployed frontend origin(s) |
-| `EVALUATOR_USERNAME` | Username for the seeded evaluator account. | `evaluator` | Yes, non-empty |
-| `EVALUATOR_PASSWORD` | Password used to seed the evaluator account. Production enforces length and character-class checks. | unset | Yes; 16–72 UTF-8 bytes and at least three character classes |
-| `SCHEDULER_ENABLED` | Enable scheduled and initial collector runs. | `true` | No |
-| `TICKER_REFRESH_SECONDS` | Backend ticker collector interval. | `30` | No |
-| `APP_TITLE` | API title metadata. | `Economic Indicators API` | No |
-| `APP_VERSION` | API version metadata. | `1.0.0` | No |
-| `VITE_API_BASE_URL` | Frontend API origin, embedded at build time. | `http://localhost:8000` | Set to the HTTPS API origin for production |
+| `APP_ENV` | Runtime mode and production checks. | `development`; production: `production` | Production deployment: yes |
+| `JWT_SECRET_KEY` | Private JWT signing key. | Placeholder exists for development only; use a private random value at least 32 UTF-8 bytes in production. | Production: yes |
+| `JWT_ALGORITHM` | JWT signing algorithm. | `HS256` | Optional, but only `HS256` is accepted |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Access-token lifetime. | `30` | Optional |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | Refresh-token lifetime. | `7` | Optional |
+| `DATABASE_URL` | SQLite file URL. | `sqlite:///./db/indicators.db` | Optional; path is relative to backend process working directory unless absolute |
+| `CORS_ORIGINS` | Comma-separated exact browser origins. | Local default `http://localhost:5173`; production example `https://your-project.vercel.app` | Production: yes, HTTPS only |
+| `EVALUATOR_USERNAME` | Username seeded at backend startup. | `evaluator` | Production: yes, non-empty |
+| `EVALUATOR_PASSWORD` | Password used to create/update the seeded evaluator. | Unset by default; use a private value meeting production policy. | Production: yes |
+| `SCHEDULER_ENABLED` | Enables scheduler and startup collection. | `true` | Optional; set `true` for hosted collection |
+| `TICKER_REFRESH_SECONDS` | Backend ticker collector interval. | `30` | Optional |
+| `APP_TITLE` | API title metadata. | `Economic Indicators API` | Optional |
+| `APP_VERSION` | API version metadata. | `1.0.0` | Optional |
+| `VITE_API_BASE_URL` | Frontend API origin, embedded at build time. | Local: `http://localhost:8000`; production: `https://<render-service>.onrender.com` | Production frontend: yes |
 
-`VITE_API_BASE_URL` is a frontend build variable, not a backend setting. It must never contain a secret. The scheduler uses UTC; the listed IST times are UTC+05:30.
+`VITE_API_BASE_URL` is a frontend build-time setting, not a backend secret. On Render, `PORT` is platform-provided and should be consumed by the start command; it is not an application setting.
 
-## Data sources and collection behavior
+## API reference
 
-All collectors run in the backend. Source URLs below reflect those configured in code; provider availability and values are not independently certified by this documentation.
+All routes are mounted at the backend origin. `GET /health` and login/refresh are public. Logout requires an access token; indicator and ticker routes require a Bearer access token.
 
-| Panel / feed | Provider and source | Granularity, transformations, and limitations |
-| --- | --- | --- |
-| GDP growth | [World Bank API](https://api.worldbank.org/v2/country/IN/indicator/NY.GDP.MKTP.KD.ZG?format=json&mrv=10); India and world use `NY.GDP.MKTP.KD.ZG`. | Annual percentage series, up to ten recent values. Source observation periods may lag current time. |
-| Government debt | [IMF WEO DataMapper](https://www.imf.org/external/datamapper/api/v1/GGXWDG_NGDP/IND/USA), `GGXWDG_NGDP`. | Annual general-government gross debt (% GDP), India and US. The endpoint returns year/value pairs without reliable actual/estimate status metadata. Future calendar years are labelled projections in the application; current and elapsed periods may contain estimates and are not reliably classified. `as_of` excludes future projections and represents the latest completed annual period available. |
-| Imports, exports, trade balance | [World Bank API](https://api.worldbank.org/v2/country/IN/indicator/NE.EXP.GNFS.CD?format=json&mrv=10) for exports (`NE.EXP.GNFS.CD`) and [imports](https://api.worldbank.org/v2/country/IN/indicator/NE.IMP.GNFS.CD?format=json&mrv=10). | Annual current USD values are converted to USD billions; trade balance is derived as exports minus imports. It is not an independently collected series. |
-| GST revenue | Curated values attributed to [PIB / Ministry of Finance](https://www.pib.gov.in/PressNoteDetails.aspx?ModuleId=3&NoteId=154789&id=154789&lang=2&reg=3). | Static annual totals cover FY2020–21 through FY2024–25; curated monthly values cover April 2024–February 2025. The collector does not fetch a live upstream series. The chart's annual monthly line is the annual total divided by 12, an average proxy rather than observed monthly data. The year-over-year series is calculated from annual totals. Coverage and underlying source figures have not been independently refreshed or verified here. |
-| Inflation | [World Bank API](https://api.worldbank.org/v2/country/IN/indicator/FP.CPI.TOTL.ZG?format=json&mrv=10), series `FP.CPI.TOTL.ZG`; displayed source attribution includes MOSPI. | Annual CPI inflation percentage. The 4% RBI target is a configured reference value, not a collected observation. The code does not use a live monthly CPI API. |
-| Government expenditure | [World Bank expense series](https://api.worldbank.org/v2/country/IN/indicator/GC.XPN.TOTL.GD.ZS?format=json&mrv=10) (`GC.XPN.TOTL.GD.ZS`) and net investment in nonfinancial assets (`GC.NFN.TOTL.GD.ZS`). | Annual % GDP. The displayed revenue expenditure is proxied by general-government expense; capital expenditure is proxied by net investment in nonfinancial assets; displayed total is their sum. These are not a direct Union Budget revenue/capital split. |
-| Market ticker | `yfinance` requests Yahoo Finance for `^BSESN`, `^NSEBANK`, and `^CNXIT`; source attribution links to [Yahoo Finance](https://finance.yahoo.com). | The collector requests five days of daily bars. These have observation dates, not verified intraday quote times, and Yahoo quotes may be delayed. This is not an official NSE/BSE feed; official NSE-source compliance is unverified and not claimed. |
+| Method | Path | Authentication | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/` | Public | API metadata and route hints; docs URL is `null` in production. |
+| `GET` | `/health` | Public | API/database health, version, and timestamp. Database failure is reported in JSON as degraded/error (handler returns HTTP 200). |
+| `POST` | `/auth/login` | Public | JSON body `{ "username": "…", "password": "…" }`; returns access and refresh tokens. Invalid credentials return 401; rate limits return 429. |
+| `POST` | `/auth/refresh` | Refresh token in JSON body | Rotates the one-use refresh token and issues a new token pair. |
+| `POST` | `/auth/logout` | Bearer access token and refresh token in body | Revokes the supplied refresh token; success is 204. |
+| `GET` | `/indicators/gdp-growth` | Bearer | GDP snapshot. |
+| `GET` | `/indicators/debt-gdp` | Bearer | Debt snapshot. |
+| `GET` | `/indicators/trade` | Bearer | Trade snapshot. |
+| `GET` | `/indicators/gst` | Bearer | GST snapshot. |
+| `GET` | `/indicators/inflation` | Bearer | Inflation snapshot. |
+| `GET` | `/indicators/govt-expenditure` | Bearer | Government expenditure snapshot. |
+| `GET` | `/ticker` | Bearer | Latest stored market ticker rows. |
 
-Indicator responses include `as_of` (source period/date) separately from `fetched_at` (backend fetch time). Annual observations become stale after 550 days and monthly observations after 62 days; a new fetch alone does not make an old observation fresh. For ticker bars, a missing, invalid, future, or more-than-three-calendar-day-old observation date is stale. Recent ticker bars are labelled delayed rather than real-time. An upstream failure retains the last valid snapshot where collector logic permits and marks it stale; absent ticker values are unavailable.
+Indicator responses follow `IndicatorResponse`: `indicator`, `title`, `source`, `source_url`, `as_of`, `fetched_at`, `is_stale`, `series`, `summary`, and optional `note`. Each data point has `period`, nullable `value`, and nullable `classification` (`actual`, `estimate`, or `projection`). Ticker items include symbol/name, nullable quote/change values, source, fetch time, nullable provider observation date, stale boolean, and status (`fresh`, `delayed`, `stale`, or `unavailable`). Validation errors use FastAPI’s `detail` format; malformed bodies generally return 422.
 
-The common HTTP client has bounded connect/read/write/pool timeouts. Ticker provider calls also have bounded execution. These limits prevent indefinite waits but do not guarantee provider availability or that a response is new.
+Interactive `/docs`, `/redoc`, and `/openapi.json` are enabled outside production and disabled when `APP_ENV=production`.
 
-## Scheduler and refresh semantics
+## Database and persistence
 
-When `SCHEDULER_ENABLED=true`, the backend runs a startup collection and registers these daily jobs in UTC:
+SQLite is the database implementation. [`backend/app/database.py`](backend/app/database.py) resolves `DATABASE_URL`, creates its parent directory, opens the file, and runs [`backend/db/schema.sql`](backend/db/schema.sql) on startup. The schema contains:
 
-| Collector | UTC | India Standard Time (IST) |
-| --- | --- | --- |
-| GDP growth | 02:00 daily | 07:30 daily |
-| Government debt | 02:30 daily | 08:00 daily |
-| Trade | 03:00 daily | 08:30 daily |
-| GST | 03:30 daily | 09:00 daily |
-| Inflation | 04:00 daily | 09:30 daily |
-| Government expenditure | 04:30 daily | 10:00 daily |
+- `users` for usernames, bcrypt password hashes, roles, and creation times.
+- `indicator_snapshots` for indicator, series, period, values, units, source, observation date, fetch time, and stale status.
+- `ticker_snapshots` for ticker values, fetch time, provider observation date, and stale status.
+- `collector_runs` for collection status and counts.
+- `refresh_tokens` for hashed refresh tokens, expiry, and revocation.
 
-The ticker is a separate backend interval job controlled by `TICKER_REFRESH_SECONDS` (30 seconds by default). The frontend ticker independently polls `GET /ticker` every 30 seconds. Indicator panels request data during dashboard load and when manually reloaded; the dashboard “Reload data” control re-reads backend snapshots and does not trigger upstream collection. Collector failures are recorded/handled by the backend, and existing valid observations are retained instead of being replaced with fabricated values.
+No PostgreSQL adapter is implemented; the application’s database helpers are SQLite-specific. The database is backend-only and is not committed to this repository. On Render Free, SQLite files on the service filesystem are ephemeral and may be lost on restart, redeploy, or spin-down. After database loss, the evaluator is seeded again from environment variables and collectors attempt to repopulate snapshots; other users, prior snapshots, and refresh-token records are not retained. A Render health result with `db: ok` verifies connectivity, not persistence.
 
-## API documentation
+## Tests and validation
 
-The API base URL in local setup is `http://127.0.0.1:8000`. All routes below are mounted at that origin. Login, refresh, and health are public; logout requires a valid Bearer access token; indicator and ticker routes require authentication.
-
-| Method and path | Authentication | Purpose |
-| --- | --- | --- |
-| `GET /` | Public | API metadata and route hints; `/docs` advertisement reflects runtime configuration. |
-| `GET /health` | Public | Database and API health status, version, and timestamp. A database error returns a degraded payload; the handler responds with HTTP 200. |
-| `POST /auth/login` | Public | Accepts `{"username":"...","password":"..."}`; returns access and refresh tokens, token type, and access expiry in seconds. |
-| `POST /auth/refresh` | Public, refresh token in body | Accepts `{"refresh_token":"..."}`; rotates the refresh token and returns a new token pair. |
-| `POST /auth/logout` | Bearer access token plus refresh token in body | Revokes the supplied refresh token; returns 204 on success. |
-| `GET /indicators/gdp-growth` | Bearer access token | GDP snapshot. |
-| `GET /indicators/debt-gdp` | Bearer access token | Debt-to-GDP snapshot. |
-| `GET /indicators/trade` | Bearer access token | Imports, exports, and balance snapshot. |
-| `GET /indicators/gst` | Bearer access token | GST snapshot. |
-| `GET /indicators/inflation` | Bearer access token | Inflation snapshot. |
-| `GET /indicators/govt-expenditure` | Bearer access token | Government expenditure snapshot. |
-| `GET /ticker` | Bearer access token | Latest stored ticker rows and provider observation dates. |
-
-Indicator responses use the `IndicatorResponse` schema: `indicator`, `title`, `source`, `source_url`, `as_of`, `fetched_at`, `is_stale`, `series`, `summary`, and optional `note`. Each series has a `series_key`, `label`, and `data` array. Data points contain `period`, nullable `value`, and nullable `classification` (`actual`, `estimate`, or `projection`). Summary items include `key`, `label`, nullable `value`, `unit`, nullable `change`, `change_unit`, nullable `is_increase`, and nullable `classification`.
-
-Ticker responses contain `items` and top-level `as_of`. Each item includes `symbol`, `display_name`, nullable `value`, `change_abs`, `change_pct`, nullable `is_up`, `source`, `fetched_at`, nullable `observation_date`, `is_stale`, and `status` (`fresh`, `delayed`, `stale`, or `unavailable`).
-
-Common verified error behavior includes FastAPI validation errors (`422`), invalid login (`401`), and login rate limit (`429`, with `Retry-After`). Protected requests reject missing or invalid authentication. Errors use FastAPI's `detail` response shape where applicable. Health can return HTTP 200 with `status: degraded` and `db: error`; callers should inspect the payload as well as HTTP status.
-
-Interactive docs are enabled outside production at `http://127.0.0.1:8000/docs` and `/redoc` (OpenAPI JSON at `/openapi.json`). Production mode disables all three.
-
-## Authentication and security
-
-The backend seeds the configured evaluator account during startup when credentials are set. Passwords are hashed with bcrypt. JWTs use HS256; access tokens default to 30 minutes. Refresh tokens default to seven days, are stored as hashes, rotate on use, and can be revoked. The frontend stores tokens in browser local storage and sends the access token as a Bearer token, so use HTTPS in deployment and protect the UI against script injection.
-
-Login rate limiting permits five failed attempts per client IP per rolling 60 seconds in each process. The in-memory limit resets on restart and is not shared by multiple backend workers; a multi-process deployment needs an external shared rate limit at a trusted proxy or gateway. Production startup validates the JWT key, evaluator credentials, HTTPS CORS origins, and supported algorithm. SQLite is accessed by the backend, not directly by the browser.
-
-## Testing and code quality
-
-Install backend development dependencies from `backend/`:
+From `backend/`, install dev dependencies and run tests:
 
 ```powershell
 python -m pip install -r requirements-dev.txt
-```
-
-Run the backend suite from `backend/`:
-
-```powershell
 python -m pytest -q -p no:cacheprovider
 ```
 
-The test configuration sets `APP_ENV=testing`, disables the scheduler, and directs the application to a temporary SQLite database. It does not use the normal local database or `.env` settings. From `frontend/`, run:
+The backend test configuration overrides `.env`, disables the scheduler, and uses a temporary SQLite database. It does not use the normal local DB.
+
+From `frontend/`:
 
 ```powershell
 npm run lint
 npm run build
+node --test tests/loginError.test.js
 ```
 
-Optional Python syntax check from the repository root:
+The frontend test uses Node’s built-in test runner; it checks login error classification. From the repository root, the Python syntax check and Git whitespace check are:
 
 ```powershell
 python -m compileall -q backend/app backend/tests
-```
-
-To inspect whitespace in local changes from the repository root:
-
-```powershell
 git diff --check
 ```
 
-These commands describe available checks; their current results depend on the local environment and are not implied by this documentation.
+## Production deployment
 
-## Known limitations and future improvements
+The repository contains no deployment manifest; configure each host using the values below.
 
-- Yahoo Finance daily bars are a delayed market-data fallback, not a verified real-time quote or official NSE/BSE feed. Official NSE-source compliance remains unverified.
-- Provider observation data for ticker bars is a daily date, not an intraday timestamp. Fetch time should not be interpreted as quote time.
-- IMF WEO values do not provide reliable actual/estimate classifications through the configured endpoint. Elapsed/current-year values may be estimates; future years are shown as projections by the application.
-- GST values are curated and have limited monthly coverage; the annual-derived monthly average is an approximation.
-- Government expenditure labels use World Bank general-government proxies and do not reproduce a direct Union Budget classification.
-- Upstream requests, current provider values, visual behavior in a browser, and deployed production behavior have not been verified by this README update.
-- No hosted deployment configuration or public demo is present in the repository.
+### Render backend
 
-Potential future work includes a verified market-data provider with trustworthy observation timestamps, richer source metadata, extended/verified GST coverage, and browser-level visual regression checks. These are future improvements, not implemented claims.
+Create a Python Web Service connected to this GitHub repository:
+
+| Setting | Value |
+| --- | --- |
+| Root directory | `backend` |
+| Build command | `pip install -r requirements.txt` |
+| Start command | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
+| Health-check path | `/health` |
+| Python version | Python 3.10+ syntax is required; choose and explicitly pin a compatible runtime in Render. |
+
+Configure `APP_ENV=production`, `JWT_SECRET_KEY`, `CORS_ORIGINS`, `EVALUATOR_USERNAME`, and `EVALUATOR_PASSWORD` in Render’s environment settings. Set `SCHEDULER_ENABLED=true` if scheduled collection is wanted. The app reads Render’s assigned port only if the start command passes `$PORT`; the command must bind `0.0.0.0`.
+
+### Vercel frontend
+
+Create a Vercel project from the same repository:
+
+| Setting | Value |
+| --- | --- |
+| Root directory | `frontend` |
+| Framework preset | Vite |
+| Install command | `npm install` (lockfile is in `frontend/`) |
+| Build command | `npm run build` |
+| Output directory | `dist` |
+| Environment variable | `VITE_API_BASE_URL=https://<your-render-service>.onrender.com` |
+
+The current app does not define URL-based routes, and no Vercel rewrite configuration is present or needed for its current login/dashboard state switch. If deep links are added later, configure SPA fallback routing then.
+
+### CORS and deployment order
+
+In Render, set `CORS_ORIGINS` to the exact Vercel production origin, for example `https://your-project.vercel.app` (no path or trailing slash). The deployed origin for this project is `https://economic-indicators-dashboard-amber.vercel.app`. Add preview origins only if those previews should access the API; the backend does not automatically allow arbitrary `*.vercel.app` domains. In Vercel, set `VITE_API_BASE_URL` to the exact Render API origin. Rebuild/redeploy the frontend after changing its `VITE_` value and restart/redeploy the backend after changing backend environment variables.
+
+Render Free has an ephemeral filesystem and spins down idle web services. Consequently, SQLite persistence and continuous in-process schedules are not reliable on that plan. This deployment can be used for a demo, but snapshots and login/session data may be lost when the service restarts or sleeps. Verify persistence requirements before relying on it.
+
+## Troubleshooting
+
+### Login reports invalid credentials
+
+The login username must exactly match the current Render `EVALUATOR_USERNAME` (including capitalization), and the password must match Render’s current `EVALUATOR_PASSWORD`. The startup code seeds the configured username, inserts it if absent, and updates the password hash if that same username already exists. Changing the username creates another row; it does not rename or delete the previous account. Never paste the password into an issue or log.
+
+Inspect the browser Network panel for the `/auth/login` request:
+
+- **401** means the backend rejected the submitted credentials. Check the Render evaluator settings and exact username entered, then save and redeploy if they were changed.
+- **No response / CORS error** means the browser could not read an API response. Verify Vercel’s `VITE_API_BASE_URL` and Render’s exact `CORS_ORIGINS` value.
+- **429** means the process-local login rate limit was reached; wait for the retry window to expire.
+
+The frontend distinguishes unauthorized responses from network/CORS failures. An error shown by an older deployed frontend may still use a generic message for both.
+
+### API unreachable or CORS blocked
+
+Open the backend `/health` URL directly. Then confirm the frontend API base URL is HTTPS and points to the Render origin, and confirm that Render allows the frontend’s exact origin. Health availability does not prove that CORS is configured for Vercel.
+
+### Health says database error or degraded
+
+Inspect the backend logs without sharing secrets, confirm `DATABASE_URL` is a SQLite URL/path usable from the backend working directory, and allow startup to initialize the schema. The endpoint returns HTTP 200 even if the JSON reports degraded status, so inspect both fields.
+
+### Dashboard panels are empty or stale
+
+Confirm `SCHEDULER_ENABLED=true`, check collector logs, and allow initial background collection to finish. Each successful API request can still return old stored data. Stale labels use observation age, not merely the most recent fetch time.
+
+### Local setup or deployment build fails
+
+Confirm commands are run from the correct directory (`backend/` for Uvicorn and Python requirements; `frontend/` for npm), Python and Node meet dependency requirements, and the frontend’s build-time `VITE_API_BASE_URL` is correct. Vercel and Render settings are managed in their dashboards because this repository has no host manifest.
+
+## Known limitations and future work
+
+- Yahoo Finance daily bars may be delayed; a trustworthy intraday quote timestamp and official NSE-source compliance are not established.
+- IMF WEO actual/estimate classifications are missing from the configured response for current and elapsed years.
+- GST values are curated static data with limited monthly coverage; its annual-derived monthly average is an approximation.
+- Government expenditure categories are proxies, not a direct Union Budget expenditure split.
+- Historical coverage, current provider availability, and live deployment behavior may vary by provider and host configuration.
+- Render Free does not provide durable local SQLite storage; data can be lost on restarts, redeploys, and spin-down.
+
+Possible future work includes a verified market-data provider with reliable observation timestamps, expanded and independently checked GST history, improved persistence for deployments that require it, and browser-based visual regression tests. These items are not implemented guarantees.
 
 ## Contributing, license, and acknowledgements
 
-For a change, create a focused branch, explain the behavior or data-source impact, and run the backend tests plus frontend lint/build. Do not include credentials, `.env` files, local databases, or generated build output in a contribution. Data-source or label changes should preserve observation dates, units, provenance, and uncertainty.
+For contributions, keep changes focused, describe any impact on data provenance or labels, and run backend tests plus frontend lint/build. Do not include credentials, `.env` files, local databases, or generated output.
 
-No `LICENSE` file is present, so this repository does not declare an open-source license.
+No `LICENSE` file is present; this repository does not declare an open-source license.
 
-The project attributes data to the World Bank, IMF, PIB/Ministry of Finance, and RBI as indicated by the implementation, and obtains ticker data through Yahoo Finance using `yfinance`. These attributions do not imply endorsement. Consult each provider's terms and availability for use of its data.
+Provider attributions in the code include the World Bank, IMF, PIB/Ministry of Finance, and RBI. Ticker data is obtained through Yahoo Finance using `yfinance`. Attribution does not imply provider endorsement; consult provider terms for data use.
