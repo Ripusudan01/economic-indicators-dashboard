@@ -1,0 +1,28 @@
+# Python runtime and virtual environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+venv/
+.venv/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+
+# Local databases and SQLite sidecar files
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+
+# Frontend build and dependencies
+node_modules/
+dist/
+dist-ssr/
+
+# Logs and editor metadata
+*.log
+.vscode/
+.idea/
