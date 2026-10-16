@@ -1,6 +1,6 @@
 # Economic Indicators Dashboard
 
-A web dashboard for exploring selected Indian and global economic indicators alongside a market-index ticker. A React frontend reads authenticated snapshots from a FastAPI backend; backend collectors validate and store provider data in SQLite on a schedule.
+A web dashboard for exploring selected Indian and global economic indicators alongside a market-index ticker. The React frontend requests protected snapshots from a FastAPI backend. The backend collects and validates provider data on a schedule and stores observations in a SQLite database.
 
 ## Live deployment
 
@@ -12,6 +12,8 @@ A web dashboard for exploring selected Indian and global economic indicators alo
 | GitHub repository | [Ripusudan01/economic-indicators-dashboard](https://github.com/Ripusudan01/economic-indicators-dashboard) |
 
 The URLs above are the deployment addresses supplied for this project. The repository configures the API to disable interactive documentation in production, so `/docs` and `/redoc` are not available in production mode.
+
+The checked-in backend implements SQLite only. The active database setting on the deployed Render service is private host configuration and is not exposed by the health endpoint, so the deployed database engine cannot be confirmed from this repository or public health response. See [Database and persistence](#database-and-persistence) for what the code supports and how to verify the live setting without sharing it.
 
 ## Contents
 
@@ -42,7 +44,7 @@ The browser communicates with the backend API. It does not call economic data pr
 
 ## Screenshots
 
-There is no verified screenshot of the running application in the repository. The file [`extracted_figma_ref_0.png`](extracted_figma_ref_0.png) is an assignment design reference, not an application screenshot. Add a real screenshot here after capturing the deployed or locally running dashboard.
+The file [`extracted_figma_ref_0.png`](extracted_figma_ref_0.png) is an assignment design reference, not an application screenshot.
 
 ## Features and indicators
 
@@ -81,7 +83,9 @@ Sources and transformations below reflect the current collector code. The applic
 | Government expenditure | [World Bank expense](https://api.worldbank.org/v2/country/IN/indicator/GC.XPN.TOTL.GD.ZS?format=json&mrv=10), `GC.XPN.TOTL.GD.ZS`, and net investment in nonfinancial assets, `GC.NFN.TOTL.GD.ZS`. | Annual % GDP. “Revenue expenditure” is proxied by general-government expense; “capital expenditure” by net investment in nonfinancial assets; displayed total is their sum. This is not the Union Budget’s direct revenue/capital split. |
 | Market ticker | Yahoo Finance via `yfinance`: `^BSESN`, `^NSEBANK`, `^CNXIT`; source attribution links to [Yahoo Finance](https://finance.yahoo.com). | Requests five days of daily bars. Observation dates are not verified intraday timestamps. Quotes may be delayed; this is not an official NSE/BSE feed. |
 
-Economic freshness uses observation age rather than fetch time alone: annual observations become stale after 550 days and monthly observations after 62 days. Ticker observations with missing, invalid, future, or more than three-calendar-day-old dates are stale. A recent Yahoo daily bar is still labelled delayed. Collector errors preserve prior valid data where the collector supports it; a successful API read does not prove the upstream source supplied new data.
+Economic freshness uses observation age rather than fetch time alone: annual observations become stale after 550 days and monthly observations after 62 days. Ticker observations with missing, invalid, future, or more than three-calendar-day-old dates are stale. A recent Yahoo daily bar is still labelled delayed. Collector errors preserve prior valid values where the collector supports it; a successful API read does not prove the upstream source supplied new data. The `as_of` value is the observation date or period label, not the provider publication timestamp. For annual sources, collectors construct period-end dates (for example, December 31 or March 31); these dates describe the period and must not be interpreted as the date the provider published the value.
+
+The shared HTTP client uses bounded timeouts: 10 seconds to connect, 20 seconds to read, 5 seconds to write, and 5 seconds for pool acquisition. It does not retry immediately; later scheduled runs provide another attempt. The synchronous yfinance download has an 8-second library timeout and a 12-second async execution bound. These limits prevent indefinite waits but do not guarantee provider availability or that a response is new.
 
 ## Architecture
 
@@ -89,13 +93,13 @@ Economic freshness uses observation age rather than fetch time alone: annual obs
 flowchart LR
   Browser[React dashboard on Vercel] -->|HTTPS API requests and polling| API[FastAPI on Render]
   Browser -->|Login and token operations| API
-  API -->|Read latest snapshots| DB[(SQLite file)]
+  API -->|Read latest snapshots| DB[(SQLite file; backend implementation)]
   Scheduler[APScheduler in backend process] --> Collectors[Six indicator collectors and ticker collector]
   Collectors -->|HTTP / yfinance requests| Providers[World Bank, IMF, curated PIB/MoF series, Yahoo Finance]
   Collectors -->|Validate and persist observations| DB
 ```
 
-The API serves records from SQLite. APScheduler runs inside the backend process and collects separately from browser requests. The frontend’s ticker polling and dashboard reload are not collector triggers.
+The checked-in API serves records through its SQLite database module. APScheduler runs inside the backend process and collects separately from browser requests. The frontend’s ticker polling and dashboard reload are not collector triggers. Whether the deployed instance uses this source revision and which `DATABASE_URL` is configured must be checked in the host dashboard; neither is reported by `/health`.
 
 ## Technology stack
 
@@ -226,7 +230,7 @@ Backend names/defaults come from [`backend/app/config.py`](backend/app/config.py
 | `JWT_ALGORITHM` | JWT signing algorithm. | `HS256` | Optional, but only `HS256` is accepted |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Access-token lifetime. | `30` | Optional |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | Refresh-token lifetime. | `7` | Optional |
-| `DATABASE_URL` | SQLite file URL. | `sqlite:///./db/indicators.db` | Optional; path is relative to backend process working directory unless absolute |
+| `DATABASE_URL` | SQLite file URL only; PostgreSQL URLs are not supported by the database module. | `sqlite:///./db/indicators.db` | Optional; path is relative to backend process working directory unless absolute |
 | `CORS_ORIGINS` | Comma-separated exact browser origins. | Local default `http://localhost:5173`; production example `https://your-project.vercel.app` | Production: yes, HTTPS only |
 | `EVALUATOR_USERNAME` | Username seeded at backend startup. | `evaluator` | Production: yes, non-empty |
 | `EVALUATOR_PASSWORD` | Password used to create/update the seeded evaluator. | Unset by default; use a private value meeting production policy. | Production: yes |
@@ -257,13 +261,25 @@ All routes are mounted at the backend origin. `GET /health` and login/refresh ar
 | `GET` | `/indicators/govt-expenditure` | Bearer | Government expenditure snapshot. |
 | `GET` | `/ticker` | Bearer | Latest stored market ticker rows. |
 
-Indicator responses follow `IndicatorResponse`: `indicator`, `title`, `source`, `source_url`, `as_of`, `fetched_at`, `is_stale`, `series`, `summary`, and optional `note`. Each data point has `period`, nullable `value`, and nullable `classification` (`actual`, `estimate`, or `projection`). Ticker items include symbol/name, nullable quote/change values, source, fetch time, nullable provider observation date, stale boolean, and status (`fresh`, `delayed`, `stale`, or `unavailable`). Validation errors use FastAPI’s `detail` format; malformed bodies generally return 422.
+Indicator responses follow `IndicatorResponse`: `indicator`, `title`, `source`, `source_url`, `as_of`, `fetched_at`, `is_stale`, `series`, `summary`, and optional `note`. Each series contains `series_key`, `label`, and `data`; each data point has `period`, nullable `value`, and nullable `classification` (`actual`, `estimate`, or `projection`). Summary entries contain `key`, `label`, nullable `value`, `unit`, nullable `change`, `change_unit`, nullable `is_increase`, and nullable `classification`.
+
+Ticker responses contain `items` and `as_of`. Each ticker item contains `symbol`, `display_name`, nullable `value`, `change_abs`, `change_pct`, nullable `is_up`, `source`, `fetched_at`, nullable `observation_date`, `is_stale`, and `status`. The current router returns `delayed`, `stale`, or `unavailable`; although the response schema also permits `fresh`, the route does not currently emit it. Validation errors use FastAPI’s `detail` format; malformed bodies generally return 422.
 
 Interactive `/docs`, `/redoc`, and `/openapi.json` are enabled outside production and disabled when `APP_ENV=production`.
 
 ## Database and persistence
 
-SQLite is the database implementation. [`backend/app/database.py`](backend/app/database.py) resolves `DATABASE_URL`, creates its parent directory, opens the file, and runs [`backend/db/schema.sql`](backend/db/schema.sql) on startup. The schema contains:
+### Database engine in the checked-in source
+
+The repository’s database implementation is **SQLite**. [`backend/app/database.py`](backend/app/database.py) imports Python’s `sqlite3`, removes the `sqlite:///` prefix from `DATABASE_URL`, resolves the resulting filesystem path, creates its parent directory, opens the file, and runs [`backend/db/schema.sql`](backend/db/schema.sql) on startup. There is no PostgreSQL driver or database adapter. Although `config.py` has a commented PostgreSQL example, a PostgreSQL connection URL is not supported by this implementation.
+
+The default is `sqlite:///./db/indicators.db`, relative to the backend process working directory. When starting locally from `backend/`, that resolves to `backend/db/indicators.db`. For production, `DATABASE_URL` must be a SQLite URL pointing to a writable file. Do not set it to a PostgreSQL/Neon URL with this source.
+
+### Production database needs verification
+
+The public `/health` handler runs `SELECT 1` and returns `status`, `db`, `version`, and `timestamp`; it does not report a database type or file path. The repository contains no host manifest or committed production environment file, and Render settings are private. Therefore this README can verify that the checked-in application supports SQLite only, but **cannot verify the database currently configured on Render**. In Render’s service Environment page, inspect the `DATABASE_URL` variable name and scheme privately; do not copy its value into GitHub, logs, or this README. If no override is configured, the source default is SQLite. If the value uses a `postgres://` or `postgresql://` scheme, it is incompatible with this code and should be corrected to a SQLite file URL or the backend code must be deliberately changed to add PostgreSQL support.
+
+The schema contains:
 
 - `users` for usernames, bcrypt password hashes, roles, and creation times.
 - `indicator_snapshots` for indicator, series, period, values, units, source, observation date, fetch time, and stale status.
@@ -271,7 +287,7 @@ SQLite is the database implementation. [`backend/app/database.py`](backend/app/d
 - `collector_runs` for collection status and counts.
 - `refresh_tokens` for hashed refresh tokens, expiry, and revocation.
 
-No PostgreSQL adapter is implemented; the application’s database helpers are SQLite-specific. The database is backend-only and is not committed to this repository. On Render Free, SQLite files on the service filesystem are ephemeral and may be lost on restart, redeploy, or spin-down. After database loss, the evaluator is seeded again from environment variables and collectors attempt to repopulate snapshots; other users, prior snapshots, and refresh-token records are not retained. A Render health result with `db: ok` verifies connectivity, not persistence.
+The database is backend-only and SQLite files are ignored by Git. If the deployed backend is on Render Free and uses its local filesystem, those files are ephemeral and may be lost on restart, redeploy, or spin-down; Free services have no persistent disk. Render documents that Free web services spin down after 15 minutes without inbound traffic and lose local file changes when they spin down/restart/redeploy ([Render Free service limits](https://render.com/docs/free)). The actual Render plan and `DATABASE_URL` are private deployment settings and have not been verified here. After a local database is lost, startup seeds the evaluator again from environment variables and scheduled startup collection attempts to repopulate snapshots; other users, prior snapshots, and refresh-token rows are not retained. A health result with `db: ok` verifies a database query, not the engine, path, or persistence.
 
 ## Tests and validation
 
@@ -313,9 +329,9 @@ Create a Python Web Service connected to this GitHub repository:
 | Build command | `pip install -r requirements.txt` |
 | Start command | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
 | Health-check path | `/health` |
-| Python version | Python 3.10+ syntax is required; choose and explicitly pin a compatible runtime in Render. |
+| Python version | Source syntax requires Python 3.10+; no exact version is pinned in the repository. Select a compatible Python runtime in Render and verify the dependency build. |
 
-Configure `APP_ENV=production`, `JWT_SECRET_KEY`, `CORS_ORIGINS`, `EVALUATOR_USERNAME`, and `EVALUATOR_PASSWORD` in Render’s environment settings. Set `SCHEDULER_ENABLED=true` if scheduled collection is wanted. The app reads Render’s assigned port only if the start command passes `$PORT`; the command must bind `0.0.0.0`.
+Configure `APP_ENV=production`, `JWT_SECRET_KEY`, `CORS_ORIGINS`, `EVALUATOR_USERNAME`, and `EVALUATOR_PASSWORD` in Render’s environment settings. Set `DATABASE_URL` only to a SQLite file URL; the checked-in backend does not implement PostgreSQL. The default path is relative to Render’s backend working directory. Set `SCHEDULER_ENABLED=true` if scheduled collection is wanted. The app reads Render’s assigned port only if the start command passes `$PORT`; the command must bind `0.0.0.0`. No Render service settings or environment values are stored in this repository, so verify the actual service root, commands, plan, and database setting in the Render dashboard.
 
 ### Vercel frontend
 
@@ -328,15 +344,15 @@ Create a Vercel project from the same repository:
 | Install command | `npm install` (lockfile is in `frontend/`) |
 | Build command | `npm run build` |
 | Output directory | `dist` |
-| Environment variable | `VITE_API_BASE_URL=https://<your-render-service>.onrender.com` |
+| Environment variable | `VITE_API_BASE_URL=https://economic-indicators-api-y72p.onrender.com` |
 
 The current app does not define URL-based routes, and no Vercel rewrite configuration is present or needed for its current login/dashboard state switch. If deep links are added later, configure SPA fallback routing then.
 
 ### CORS and deployment order
 
-In Render, set `CORS_ORIGINS` to the exact Vercel production origin, for example `https://your-project.vercel.app` (no path or trailing slash). The deployed origin for this project is `https://economic-indicators-dashboard-amber.vercel.app`. Add preview origins only if those previews should access the API; the backend does not automatically allow arbitrary `*.vercel.app` domains. In Vercel, set `VITE_API_BASE_URL` to the exact Render API origin. Rebuild/redeploy the frontend after changing its `VITE_` value and restart/redeploy the backend after changing backend environment variables.
+In Render, set `CORS_ORIGINS` to the exact Vercel production origin `https://economic-indicators-dashboard-amber.vercel.app` (no path or trailing slash). Add preview origins only if those previews should access the API; the backend does not automatically allow arbitrary `*.vercel.app` domains. In Vercel, set `VITE_API_BASE_URL` to `https://economic-indicators-api-y72p.onrender.com`. The backend permits `GET`, `POST`, and `OPTIONS`, allows `Authorization` and `Content-Type` headers, and does not allow cookie credentials. Rebuild/redeploy the frontend after changing its `VITE_` value and restart/redeploy the backend after changing backend environment variables.
 
-Render Free has an ephemeral filesystem and spins down idle web services. Consequently, SQLite persistence and continuous in-process schedules are not reliable on that plan. This deployment can be used for a demo, but snapshots and login/session data may be lost when the service restarts or sleeps. Verify persistence requirements before relying on it.
+If the backend is on Render Free and uses local SQLite, its ephemeral filesystem and idle spin-down make persistence and continuous in-process schedules unreliable. This deployment can be used for a demo, but snapshots and login/session data may be lost when the service restarts or sleeps. The active plan and storage configuration must be checked in Render before making a claim about the deployed database’s persistence.
 
 ## Troubleshooting
 
@@ -358,7 +374,7 @@ Open the backend `/health` URL directly. Then confirm the frontend API base URL 
 
 ### Health says database error or degraded
 
-Inspect the backend logs without sharing secrets, confirm `DATABASE_URL` is a SQLite URL/path usable from the backend working directory, and allow startup to initialize the schema. The endpoint returns HTTP 200 even if the JSON reports degraded status, so inspect both fields.
+Inspect the backend logs without sharing secrets, confirm `DATABASE_URL` is a SQLite URL/path usable from the backend working directory, and allow startup to initialize the schema. PostgreSQL URLs are incompatible with the checked-in `sqlite3` database layer. The endpoint returns HTTP 200 even if the JSON reports degraded status, so inspect both fields. The endpoint does not reveal database type or path.
 
 ### Dashboard panels are empty or stale
 
