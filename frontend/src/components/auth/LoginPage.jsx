@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useAuth } from "../../auth/useAuth";
+import { getLoginErrorMessage } from "../../auth/loginError";
 import Icon from "../ui/Icon";
 
 export default function LoginPage() {
@@ -16,10 +17,7 @@ export default function LoginPage() {
     try {
       await login(username, password);
     } catch (err) {
-      console.error("Login failed:", err);
-      setError(
-        err.response?.data?.detail || "Invalid credentials. Please verify username and password."
-      );
+      setError(getLoginErrorMessage(err));
     } finally {
       setLoading(false);
     }

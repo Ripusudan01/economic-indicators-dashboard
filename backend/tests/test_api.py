@@ -263,6 +263,30 @@ def test_configured_evaluator_credentials_seed_and_rotate(monkeypatch):
     assert client.post("/auth/login", json={"username": username, "password": second_password}).status_code == 200
 
 
+def test_changing_configured_evaluator_username_preserves_existing_user(monkeypatch):
+    from app.main import _seed_initial_users, settings
+
+    old_username = f"previous_evaluator_{secrets.token_hex(4)}"
+    new_username = f"current_evaluator_{secrets.token_hex(4)}"
+    old_password = secrets.token_urlsafe(24)
+    new_password = secrets.token_urlsafe(24)
+
+    monkeypatch.setattr(settings, "evaluator_username", old_username)
+    monkeypatch.setattr(settings, "evaluator_password", old_password)
+    _seed_initial_users()
+
+    monkeypatch.setattr(settings, "evaluator_username", new_username)
+    monkeypatch.setattr(settings, "evaluator_password", new_password)
+    _seed_initial_users()
+
+    assert client.post(
+        "/auth/login", json={"username": new_username, "password": new_password}
+    ).status_code == 200
+    assert client.post(
+        "/auth/login", json={"username": old_username, "password": old_password}
+    ).status_code == 200
+
+
 def test_protected_routes_require_auth():
     """Verify that indicator endpoints return 401/403 when no auth token is provided."""
     endpoints = [
