@@ -1,9 +1,11 @@
-import React from "react";
-import { AuthProvider, useAuth } from "./auth/AuthContext";
-import Dashboard from "./components/layout/Dashboard";
+import React, { lazy, Suspense } from "react";
+import { AuthProvider } from "./auth/AuthContext";
+import { useAuth } from "./auth/useAuth";
 import LoginPage from "./components/auth/LoginPage";
 import "./styles/theme.css";
 import "./index.css";
+
+const Dashboard = lazy(() => import("./components/layout/Dashboard"));
 
 function AppContent() {
   const { isAuthenticated, loading } = useAuth();
@@ -17,7 +19,11 @@ function AppContent() {
     );
   }
 
-  return isAuthenticated ? <Dashboard /> : <LoginPage />;
+  return isAuthenticated ? (
+    <Suspense fallback={<div className="app-loading-screen"><div className="loading-spinner"></div><p className="loading-text">Loading dashboard…</p></div>}>
+      <Dashboard />
+    </Suspense>
+  ) : <LoginPage />;
 }
 
 export default function App() {

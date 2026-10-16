@@ -13,6 +13,7 @@ export default function IndicatorCard({
   error,
   onRetry,
   metrics = [],
+  hasData = true,
   children,
 }) {
   const [showNote, setShowNote] = useState(false);
@@ -38,7 +39,7 @@ export default function IndicatorCard({
   }
 
   // Error State
-  if (error) {
+  if (error && !hasData) {
     return (
       <div className="indicator-card error-card">
         <div className="card-header">
@@ -57,6 +58,20 @@ export default function IndicatorCard({
     );
   }
 
+  if (!hasData) {
+    return (
+      <div className="indicator-card error-card">
+        <div className="card-header"><h2 className="card-title">{title}</h2><span className="badge-stale">UNAVAILABLE</span></div>
+        <div className="error-body">
+          <p className="error-message">No observations are available for this indicator.</p>
+          <p className="error-detail">{error || "The source has not provided a valid observation yet."}</p>
+          {onRetry && <button className="retry-btn" onClick={onRetry}><Icon name="refresh" size={14} /> Retry Request</button>}
+        </div>
+        <div className="card-footer"><span>Source: {source || "Not available"} · As of: {asOf || "—"}</span></div>
+      </div>
+    );
+  }
+
   return (
     <div className={`indicator-card ${isStale ? "stale-card" : ""}`}>
       {/* Top Header */}
@@ -70,7 +85,7 @@ export default function IndicatorCard({
 
         <div className="header-meta">
           {isStale && (
-            <span className="badge-stale" title="Upstream failed; showing last retained observation">
+            <span className="badge-stale" title="Observation exceeds its age threshold or the latest refresh failed">
               <><Icon name="alert" size={12} /> STALE DATA</>
             </span>
           )}
@@ -78,7 +93,7 @@ export default function IndicatorCard({
             <button
               className="card-refresh-icon"
               onClick={onRetry}
-              title="Refresh this panel"
+              title="Reload this panel from its current backend snapshot"
             >
               <Icon name="refresh" size={14} />
             </button>
@@ -124,6 +139,7 @@ export default function IndicatorCard({
       )}
 
       {/* Chart Visualization Area */}
+      {error && <p className="error-detail" role="status">Refresh failed; showing the last available data. {error}</p>}
       <div className="chart-container">{children}</div>
 
       {/* Card Metadata Footer */}

@@ -6,7 +6,10 @@ POST /auth/refresh — refresh token → new access token + rotated refresh toke
 POST /auth/logout  — revoke refresh token
 """
 import hashlib
-from fastapi import APIRouter, Depends, HTTPException, status
+import threading
+import time
+from collections import deque
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
 from app import database as db
@@ -22,6 +25,42 @@ from app.config import get_settings
 import bcrypt
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+# Process-local guard: 5 failed attempts per client IP in a rolling 60 seconds.
+# For multiple workers, enforce an additional shared limit at the proxy/gateway.
+_LOGIN_WINDOW_SECONDS = 60
+_LOGIN_MAX_FAILURES = 5
+_MAX_TRACKED_CLIENTS = 10_000
+_login_failures: dict[str, deque[float]] = {}
+_login_failures_lock = threading.Lock()
+
+
+def _check_login_limit(client_ip: str) -> int:
+    now = time.monotonic()
+    with _login_failures_lock:
+        attempts = _login_failures.get(client_ip, deque())
+        while attempts and now - attempts[0] >= _LOGIN_WINDOW_SECONDS:
+            attempts.popleft()
+        return max(0, int(_LOGIN_WINDOW_SECONDS - (now - attempts[0]))) if len(attempts) >= _LOGIN_MAX_FAILURES else 0
+
+
+def _record_login_failure(client_ip: str) -> None:
+    now = time.monotonic()
+    with _login_failures_lock:
+        attempts = _login_failures.get(client_ip)
+        if attempts is None:
+            if len(_login_failures) >= _MAX_TRACKED_CLIENTS:
+                _login_failures.pop(next(iter(_login_failures)))
+            attempts = deque()
+            _login_failures[client_ip] = attempts
+        while attempts and now - attempts[0] >= _LOGIN_WINDOW_SECONDS:
+            attempts.popleft()
+        attempts.append(now)
+
+
+def _clear_login_failures(client_ip: str) -> None:
+    with _login_failures_lock:
+        _login_failures.pop(client_ip, None)
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
@@ -71,20 +110,32 @@ def get_user_by_username(username: str) -> dict | None:
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.post("/login", response_model=TokenResponse)
-def login(body: LoginRequest):
+def login(body: LoginRequest, request: Request):
     """
     Authenticate with username and password.
     Returns a short-lived access token and a long-lived refresh token.
     The refresh token is for server-side rotation; revoke on logout.
     """
+    client_ip = request.client.host if request.client else "unknown"
+    retry_after = _check_login_limit(client_ip)
+    if retry_after:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed login attempts; retry later",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     user = get_user_by_username(body.username)
     if user is None or not verify_password(body.password, user["password_hash"]):
+        _record_login_failure(client_ip)
         # Return the same error for unknown user and wrong password
         # to avoid username enumeration.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",
         )
+
+    _clear_login_failures(client_ip)
 
     settings = get_settings()
     access_token = create_access_token(user["id"], user["username"], user["role"])

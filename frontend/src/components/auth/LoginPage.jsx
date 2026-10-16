@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useAuth } from "../../auth/AuthContext";
+import { useAuth } from "../../auth/useAuth";
 import Icon from "../ui/Icon";
 
 export default function LoginPage() {
@@ -34,7 +34,7 @@ export default function LoginPage() {
           <div className="badge-tag">AUTHENTICATION GATEWAY</div>
           <h1 className="login-title">ECONOMIC INDICATOR</h1>
           <p className="login-subtitle">
-            Sign in to access real-time macroeconomic indicators & live market ticker.
+            Sign in to view scheduled economic indicators and potentially delayed market quotes.
           </p>
         </div>
 

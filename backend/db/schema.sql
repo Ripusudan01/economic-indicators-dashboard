@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS ticker_snapshots (
     change_pct  REAL,
     source      TEXT    NOT NULL DEFAULT 'yfinance',
     fetched_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    observation_date TEXT,
     is_stale    INTEGER NOT NULL DEFAULT 0
 );
 

@@ -45,6 +45,13 @@ export default function TradePanel({ data, loading, error, onRetry }) {
 
   const exportsSummary = data?.summary?.find((s) => s.key === "exports_latest");
   const importsSummary = data?.summary?.find((s) => s.key === "imports_latest");
+  const tradeValues = chartData.flatMap((point) =>
+    [point.imports, point.exports, point.balance].filter(Number.isFinite),
+  );
+  const tradeMin = tradeValues.length ? Math.min(0, ...tradeValues) : 0;
+  const tradeMax = tradeValues.length ? Math.max(0, ...tradeValues) : 1;
+  const tradeRange = tradeMax - tradeMin;
+  const axisPadding = tradeRange ? tradeRange * 0.08 : 1;
 
   const metrics = [
     {
@@ -78,6 +85,7 @@ export default function TradePanel({ data, loading, error, onRetry }) {
       error={error}
       onRetry={onRetry}
       metrics={metrics}
+      hasData={Boolean(data?.series?.some((series) => series.data?.some((point) => point.value !== null)))}
     >
       <div className="chart-legend-row">
         <span className="legend-chip blue">
@@ -119,7 +127,10 @@ export default function TradePanel({ data, loading, error, onRetry }) {
           <YAxis
             stroke="#94a3b8"
             fontSize={11}
-            domain={[0, (dataMax) => Math.ceil(dataMax * 1.15)]}
+            domain={[
+              Math.floor(tradeMin - axisPadding),
+              Math.ceil(tradeMax + axisPadding),
+            ]}
             tickFormatter={(v) => `${v}B`}
             tickLine={false}
             axisLine={false}

@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends
 from app.auth.jwt import get_current_user
 from app.models.schemas import TickerResponse, TickerItem
 from app import database as db
+from app.utils.freshness import is_ticker_observation_stale
 
 router = APIRouter(prefix="/ticker", tags=["ticker"])
 
@@ -31,12 +32,12 @@ def get_ticker(_user=Depends(get_current_user)):
     Returns the latest ticker snapshot for SENSEX, NIFTY BANK, and NIFTY IT.
     """
     items = []
-    latest_ts = None
+    latest_observation = None
 
     for symbol in ["SENSEX", "NIFTY_BANK", "NIFTY_IT"]:
         row = db.fetchone(
             """
-            SELECT symbol, value, change_abs, change_pct, source, fetched_at, is_stale
+            SELECT symbol, value, change_abs, change_pct, source, fetched_at, observation_date, is_stale
             FROM ticker_snapshots
             WHERE symbol = ?
             ORDER BY fetched_at DESC
@@ -52,8 +53,11 @@ def get_ticker(_user=Depends(get_current_user)):
             chg_pct = row["change_pct"]
             src = row["source"] or DEFAULT_SOURCES.get(symbol, "Yahoo Finance")
             fetched_at = row["fetched_at"]
-            latest_ts = max(latest_ts, fetched_at) if latest_ts else fetched_at
+            observed = row["observation_date"]
+            if observed:
+                latest_observation = max(latest_observation, observed) if latest_observation else observed
             is_up = (chg_pct >= 0) if chg_pct is not None else None
+            stale = bool(row["is_stale"]) or is_ticker_observation_stale(observed)
 
             items.append(
                 TickerItem(
@@ -65,7 +69,9 @@ def get_ticker(_user=Depends(get_current_user)):
                     is_up=is_up,
                     source=src,
                     fetched_at=fetched_at,
-                    is_stale=bool(row["is_stale"]),
+                    observation_date=observed,
+                    is_stale=stale,
+                    status="stale" if stale else "delayed",
                 )
             )
         else:
@@ -78,9 +84,11 @@ def get_ticker(_user=Depends(get_current_user)):
                     change_pct=None,
                     is_up=None,
                     source=DEFAULT_SOURCES.get(symbol, "Yahoo Finance"),
-                    fetched_at=latest_ts or "—",
+                    fetched_at="—",
+                    observation_date=None,
                     is_stale=True,
+                    status="unavailable",
                 )
             )
 
-    return TickerResponse(items=items, as_of=latest_ts or "—")
+    return TickerResponse(items=items, as_of=latest_observation or "—")

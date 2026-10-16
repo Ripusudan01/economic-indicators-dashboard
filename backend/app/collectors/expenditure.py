@@ -24,6 +24,7 @@ import asyncio
 from app import database as db
 from app.utils.http_client import safe_get
 from app.collectors.validation import finite_number, valid_year
+from app.utils.freshness import is_observation_stale
 
 INDICATOR_NAME = "govt_expenditure"
 SOURCE = "World Bank API (GC.XPN.TOTL.GD.ZS / GC.NFN.TOTL.GD.ZS)"
@@ -117,6 +118,7 @@ async def run() -> None:
                 ]
 
                 for series_key, label, value in rows_to_insert:
+                    observed = f"{year}-03-31"
                     if value is None:
                         db.execute(
                             "UPDATE indicator_snapshots SET is_stale=1 WHERE indicator_name=? AND series_key=? AND period_label=?",
@@ -128,12 +130,13 @@ async def run() -> None:
                         INSERT INTO indicator_snapshots
                             (indicator_name, series_key, period_label, value, unit,
                              source, source_url, observation_date, fetched_at, is_stale)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(indicator_name, series_key, period_label)
                         DO UPDATE SET
                             value=excluded.value,
                             fetched_at=excluded.fetched_at,
-                            is_stale=0
+                            observation_date=excluded.observation_date,
+                            is_stale=excluded.is_stale
                         """,
                         (
                             INDICATOR_NAME,
@@ -143,8 +146,9 @@ async def run() -> None:
                             "% of GDP",
                             SOURCE,
                             SOURCE_URL,
-                            f"{year}-03-31",  # Indian fiscal year end
+                            observed,  # Indian fiscal year end
                             fetched_at,
+                            int(is_observation_stale(observed)),
                         ),
                     )
                     rows_upserted += 1

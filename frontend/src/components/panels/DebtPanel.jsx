@@ -19,6 +19,8 @@ export default function DebtPanel({ data, loading, error, onRetry }) {
     return indiaSeries.slice(-7).map((pt) => ({
       period: pt.period,
       value: pt.value,
+      classification: pt.classification,
+      axisPeriod: pt.classification === "projection" ? `${pt.period}*` : pt.period,
       label: pt.value !== null && pt.value !== undefined ? `${pt.value}%` : null,
     }));
   }, [data]);
@@ -29,7 +31,7 @@ export default function DebtPanel({ data, loading, error, onRetry }) {
   const metrics = [
     {
       icon: <IndiaFlag size={24} />,
-      label: "India (latest period)",
+      label: `India (latest period${indiaSummary?.classification === "projection" ? ", projection" : ""})`,
       value: indiaSummary?.value !== undefined && indiaSummary?.value !== null ? `${indiaSummary.value}` : "—",
       unit: "%",
       change: indiaSummary?.change !== undefined ? indiaSummary.change : null,
@@ -61,6 +63,7 @@ export default function DebtPanel({ data, loading, error, onRetry }) {
       error={error}
       onRetry={onRetry}
       metrics={metrics}
+      hasData={Boolean(data?.series?.some((series) => series.data?.some((point) => point.value !== null)))}
     >
       <ResponsiveContainer width="100%" height={260}>
         <AreaChart
@@ -75,7 +78,7 @@ export default function DebtPanel({ data, loading, error, onRetry }) {
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.07)" vertical={false} />
           <XAxis
-            dataKey="period"
+            dataKey="axisPeriod"
             stroke="#94a3b8"
             fontSize={12}
             tickLine={false}
@@ -102,6 +105,7 @@ export default function DebtPanel({ data, loading, error, onRetry }) {
           />
         </AreaChart>
       </ResponsiveContainer>
+      <p className="debt-chart-note">* Future calendar-year values are projections. The IMF endpoint does not classify the current or elapsed years; these may include estimates.</p>
     </IndicatorCard>
   );
 }

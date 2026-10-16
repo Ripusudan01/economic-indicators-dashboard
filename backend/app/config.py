@@ -53,6 +53,13 @@ class Settings(BaseSettings):
                 for origin in origins
             ):
                 raise ValueError("CORS_ORIGINS must contain only deployed frontend origins in production")
+            if not self.evaluator_username.strip():
+                raise ValueError("EVALUATOR_USERNAME must be configured in production")
+            password = self.evaluator_password or ""
+            if not _is_strong_evaluator_password(password):
+                raise ValueError(
+                    "EVALUATOR_PASSWORD must be 16-72 UTF-8 bytes and include at least 3 character classes"
+                )
         if self.jwt_algorithm != "HS256":
             raise ValueError("JWT_ALGORITHM must be HS256")
         return self
@@ -72,3 +79,14 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Cached settings instance — call this everywhere instead of Settings()."""
     return Settings()
+
+
+def _is_strong_evaluator_password(password: str) -> bool:
+    encoded = password.encode("utf-8")
+    classes = sum((
+        any(char.islower() for char in password),
+        any(char.isupper() for char in password),
+        any(char.isdigit() for char in password),
+        any(not char.isalnum() for char in password),
+    ))
+    return 16 <= len(encoded) <= 72 and classes >= 3

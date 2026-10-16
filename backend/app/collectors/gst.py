@@ -9,6 +9,7 @@ import calendar
 from datetime import datetime, timezone
 
 from app import database as db
+from app.utils.freshness import is_observation_stale
 
 INDICATOR_NAME = "gst"
 SOURCE = "GST Council / Ministry of Finance (Press Releases)"
@@ -78,6 +79,7 @@ async def run() -> None:
             # FY25 = April 2024 – March 2025, observation = 2025-03-31
             fy_num = int(fy[2:]) + 2000
             observation_date = f"{fy_num}-03-31"
+            stale = int(is_observation_stale(observation_date))
 
             for sk, val in [("total", value), ("yoy_pct", yoy)]:
                 db.execute(
@@ -85,12 +87,13 @@ async def run() -> None:
                     INSERT INTO indicator_snapshots
                         (indicator_name, series_key, period_label, value, unit,
                          source, source_url, observation_date, fetched_at, is_stale)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(indicator_name, series_key, period_label)
                     DO UPDATE SET
                         value=excluded.value,
                         fetched_at=excluded.fetched_at,
-                        is_stale=0
+                        observation_date=excluded.observation_date,
+                        is_stale=excluded.is_stale
                     """,
                     (
                         INDICATOR_NAME,
@@ -102,6 +105,7 @@ async def run() -> None:
                         SOURCE_URL,
                         observation_date,
                         fetched_at,
+                        stale,
                     ),
                 )
                 rows_upserted += 1
@@ -110,17 +114,20 @@ async def run() -> None:
         monthly_keys = sorted(GST_MONTHLY_FY25.keys())
         for i, month in enumerate(monthly_keys):
             value = GST_MONTHLY_FY25[month]
+            observed = f"{month}-{calendar.monthrange(int(month[:4]), int(month[5:7]))[1]:02d}"
+            stale = int(is_observation_stale(observed, frequency="monthly"))
             db.execute(
                 """
                 INSERT INTO indicator_snapshots
                     (indicator_name, series_key, period_label, value, unit,
                      source, source_url, observation_date, fetched_at, is_stale)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(indicator_name, series_key, period_label)
                 DO UPDATE SET
                     value=excluded.value,
                     fetched_at=excluded.fetched_at,
-                    is_stale=0
+                    observation_date=excluded.observation_date,
+                    is_stale=excluded.is_stale
                 """,
                 (
                     INDICATOR_NAME,
@@ -130,8 +137,9 @@ async def run() -> None:
                     "INR_L_CR",
                     SOURCE,
                     SOURCE_URL,
-                    f"{month}-{calendar.monthrange(int(month[:4]), int(month[5:7]))[1]:02d}",
+                    observed,
                     fetched_at,
+                    stale,
                 ),
             )
             rows_upserted += 1

@@ -122,7 +122,7 @@ def root():
             "name": settings.app_title,
             "version": settings.app_version,
             "status": "online",
-            "docs_url": "/docs",
+            "docs_url": None if settings.app_env.lower() == "production" else "/docs",
             "health_check": "/health",
             "auth_endpoint": "/auth/login",
             "ticker_endpoint": "/ticker",

@@ -7,9 +7,10 @@ Data source: yfinance (Yahoo Finance) Python library
   NIFTY IT:   ^CNXIT
 
 Why yfinance instead of NSE direct:
-  NSE's public API (nseindia.com/api/allIndices) requires valid browser session
-  cookies and a specific User-Agent. Programmatic access is unreliable and
-  subject to rate-limiting or blocking without a formal data agreement.
+  A direct request to NSE's allIndices endpoint could not be verified from the
+  development environment, and no stable supported unauthenticated interface
+  was established. This collector keeps the documented fallback rather than
+  scraping an unsupported endpoint.
   
   The assignment states: "Use publicly accessible NSE endpoints or pages as the
   principal source for data available from NSE. Where NSE does not publish a
@@ -19,16 +20,16 @@ Why yfinance instead of NSE direct:
   NIFTY BANK and NIFTY IT are NSE indices. We attempt yfinance for all three
   as the documented fallback, clearly labelled as such in the UI and README.
 
-Refresh: Every 30 seconds (configurable). Data is only live during market hours
-  (Mon-Fri, 09:15-15:30 IST). Outside market hours, last known values are
-  served with is_stale=False (this is expected — markets are closed).
+Refresh: Every 30 seconds (configurable). Yahoo Finance may return delayed
+  quotes; these are never represented as real-time. Failed refreshes preserve
+  the last quote and mark it stale.
 
 NOTE: yfinance is not an official NSE/BSE data provider. Usage is subject
   to Yahoo Finance's terms. This is documented as a limitation.
 """
 import asyncio
 import math
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from app import database as db
 
@@ -42,9 +43,10 @@ SYMBOLS = [
 
 SOURCE_URL = "https://finance.yahoo.com"
 LIMITATION = (
-    "Market data via yfinance (Yahoo Finance). NSE direct API requires session cookies. "
+    "Market data via yfinance (Yahoo Finance). Direct NSE API access was not established in the development environment. "
     "SENSEX is a BSE index. NIFTY BANK and NIFTY IT are NSE indices served via Yahoo Finance. "
-    "15-minute delay applies per Yahoo Finance terms. Non-NSE source — documented per assignment."
+    "Yahoo Finance quotes can be delayed (commonly about 15 minutes); they are not real-time. "
+    "Non-NSE source — documented per assignment."
 )
 
 # Keep only the last 100 rows per symbol to avoid unbounded growth
@@ -55,36 +57,52 @@ async def _fetch_yfinance(yf_ticker: str) -> dict | None:
     """
     Fetch latest quote from yfinance using asyncio to run in executor
     (yfinance is a synchronous library).
-    Returns dict with value, change_abs, change_pct or None on failure.
+    Returns value, change, and the daily bar's observation date when available.
     """
     def _sync_fetch() -> dict | None:
         try:
             import yfinance as yf
-            ticker = yf.Ticker(yf_ticker)
-            info = ticker.fast_info
-            price = getattr(info, "last_price", None)
-            prev_close = getattr(info, "previous_close", None)
-            if price is None:
+            frame = yf.download(
+                yf_ticker, period="5d", interval="1d", progress=False,
+                threads=False, timeout=8, multi_level_index=False,
+            )
+            if frame is None or frame.empty or "Close" not in frame:
                 return None
-            price = float(price)
+            closes = frame["Close"].dropna()
+            if len(closes) < 2:
+                return None
+            price = float(closes.iloc[-1])
             if not math.isfinite(price) or price <= 0:
                 return None
-            prev_close = float(prev_close) if prev_close is not None else None
+            prev_close = float(closes.iloc[-2])
             if prev_close is not None and (not math.isfinite(prev_close) or prev_close <= 0):
                 prev_close = None
             change_abs = round(price - prev_close, 2) if prev_close is not None else None
             change_pct = round(change_abs / prev_close * 100, 2) if prev_close is not None and change_abs is not None else None
+            observation_date = None
+            try:
+                index_value = closes.index[-1]
+                candidate_date = index_value.date().isoformat() if hasattr(index_value, "date") else str(index_value)[:10]
+                observation_date = date.fromisoformat(candidate_date).isoformat()
+            except (TypeError, ValueError, AttributeError):
+                # Do not substitute the backend fetch time for missing provider metadata.
+                pass
             return {
                 "value": round(price, 2),
                 "change_abs": change_abs,
                 "change_pct": change_pct,
+                "observation_date": observation_date,
             }
         except Exception as exc:
             print(f"[Ticker] yfinance error for {yf_ticker}: {exc}")
             return None
 
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _sync_fetch)
+    loop = asyncio.get_running_loop()
+    try:
+        return await asyncio.wait_for(loop.run_in_executor(None, _sync_fetch), timeout=12)
+    except asyncio.TimeoutError:
+        print(f"[Ticker] yfinance request timed out for {yf_ticker}")
+        return None
 
 
 async def run() -> None:
@@ -117,8 +135,8 @@ async def run() -> None:
             db.execute(
                 """
                 INSERT INTO ticker_snapshots
-                    (symbol, value, change_abs, change_pct, source, fetched_at, is_stale)
-                VALUES (?, ?, ?, ?, ?, ?, 0)
+                    (symbol, value, change_abs, change_pct, source, fetched_at, observation_date, is_stale)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0)
                 """,
                 (
                     symbol,
@@ -127,6 +145,7 @@ async def run() -> None:
                     data["change_pct"],
                     source,
                     fetched_at,
+                    data["observation_date"],
                 ),
             )
             rows_upserted += 1

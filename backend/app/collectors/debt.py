@@ -30,7 +30,10 @@ SOURCE_URL = "https://www.imf.org/external/datamapper/api/v1/GGXWDG_NGDP/IND/USA
 IMF_INDICATOR = "GGXWDG_NGDP"
 
 LIMITATION = (
-    "Annual IMF WEO general government gross debt (% of GDP); recent periods may be estimates or projections. "
+    "Annual IMF WEO general government gross debt (% of GDP). The DataMapper values response contains year/value pairs "
+    "without reliable actual-versus-estimate metadata, so current and elapsed years are not classified. Future calendar years are "
+    "marked as projections because they cannot be observed actuals. As of uses the latest completed calendar-year period; "
+    "that period may still be an IMF estimate. "
     "The design reference shows a date-labeled chart; we render annual data points. "
     "Non-NSE source."
 )

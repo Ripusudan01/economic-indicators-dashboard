@@ -1,5 +1,5 @@
 import React from "react";
-import { useAuth } from "../../auth/AuthContext";
+import { useAuth } from "../../auth/useAuth";
 import Icon from "../ui/Icon";
 
 export default function Header({ onRefreshAll, isRefreshing, isFixedViewport, setIsFixedViewport }) {
@@ -36,10 +36,10 @@ export default function Header({ onRefreshAll, isRefreshing, isFixedViewport, se
             className="control-btn"
             onClick={onRefreshAll}
             disabled={isRefreshing}
-            title="Fetch fresh data for all indicators"
+            title="Reload the latest indicator snapshots currently stored by the backend"
           >
             <Icon name="refresh" size={16} className={`control-icon ${isRefreshing ? "spin" : ""}`} />
-            <span className="btn-text">{isRefreshing ? "Refreshing..." : "Refresh"}</span>
+            <span className="btn-text">{isRefreshing ? "Reloading..." : "Reload data"}</span>
           </button>
 
           {/* User profile & evaluation account */}

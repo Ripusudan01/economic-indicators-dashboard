@@ -1,19 +1,21 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { lazy, Suspense, useState, useEffect, useCallback } from "react";
 import api from "../../api/client";
 import Header from "./Header";
 import Ticker from "./Ticker";
-import GdpPanel from "../panels/GdpPanel";
-import DebtPanel from "../panels/DebtPanel";
-import TradePanel from "../panels/TradePanel";
-import GstPanel from "../panels/GstPanel";
-import InflationPanel from "../panels/InflationPanel";
-import ExpenditurePanel from "../panels/ExpenditurePanel";
 import Icon from "../ui/Icon";
+
+const GdpPanel = lazy(() => import("../panels/GdpPanel"));
+const DebtPanel = lazy(() => import("../panels/DebtPanel"));
+const TradePanel = lazy(() => import("../panels/TradePanel"));
+const GstPanel = lazy(() => import("../panels/GstPanel"));
+const InflationPanel = lazy(() => import("../panels/InflationPanel"));
+const ExpenditurePanel = lazy(() => import("../panels/ExpenditurePanel"));
 
 export default function Dashboard() {
   const [isFixedViewport, setIsFixedViewport] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [systemHealth, setSystemHealth] = useState(null);
+  const [healthState, setHealthState] = useState("loading");
 
   // States for each of the 6 indicators
   const [gdp, setGdp] = useState({ data: null, loading: true, error: null });
@@ -42,7 +44,14 @@ export default function Dashboard() {
     setIsRefreshing(true);
     try {
       // Check health
-      api.get("/health").then((res) => setSystemHealth(res.data)).catch(() => {});
+      setHealthState("loading");
+      api.get("/health").then((res) => {
+        setSystemHealth(res.data);
+        setHealthState(res.data?.status === "ok" && res.data?.db === "ok" ? "healthy" : "unavailable");
+      }).catch(() => {
+        setSystemHealth(null);
+        setHealthState("unavailable");
+      });
 
       // Concurrent fetch for all 6 panels
       await Promise.allSettled([
@@ -65,11 +74,11 @@ export default function Dashboard() {
   return (
     <div className={`dashboard-wrapper ${isFixedViewport ? "viewport-fixed" : "viewport-fluid"}`}>
       {/* 1214x2159 Viewport Indicator Banner */}
-      {isFixedViewport && (
+      {/* {isFixedViewport && (
         <div className="viewport-ruler-bar">
           <span><Icon name="ruler" size={14} /> Required Evaluation Viewport: <strong>1214 × 2159 CSS pixels</strong> (Standard View Active)</span>
         </div>
-      )}
+      )} */}
 
       <div className="dashboard-container">
         {/* Header */}
@@ -80,10 +89,11 @@ export default function Dashboard() {
           setIsFixedViewport={setIsFixedViewport}
         />
 
-        {/* Live Market Ticker */}
+        {/* Yahoo Finance market data; quote delay varies */}
         <Ticker />
 
         {/* 6 Indicators 2-Column Grid */}
+        <Suspense fallback={<main className="indicators-grid" aria-busy="true"><div className="indicator-card skeleton-card">Loading indicator panels…</div></main>}>
         <main className="indicators-grid">
           <GdpPanel
             data={gdp.data}
@@ -127,18 +137,22 @@ export default function Dashboard() {
             onRetry={() => fetchIndicator("/indicators/govt-expenditure", setExpenditure)}
           />
         </main>
+        </Suspense>
 
         {/* Dashboard Footer & System Health */}
         <footer className="dashboard-footer">
           <div className="footer-left">
-            <span className="footer-brand">Economic Indicators Dashboard • Software Development Intern Round 2</span>
-            <span className="footer-sub">Built with React, Recharts, and FastAPI • Public sources and documented fallbacks</span>
+            <span className="footer-brand">Economic Indicators Dashboard</span>
           </div>
 
           <div className="footer-right">
             <div className="health-status-badge">
-              <span className={`status-dot ${systemHealth?.status === "ok" ? "green" : "yellow"}`}></span>
-              <span>API: {systemHealth?.status || "online"} • DB: {systemHealth?.db || "ok"}</span>
+              <span className={`status-dot ${healthState === "healthy" ? "green" : "yellow"}`}></span>
+              <span>
+                API: {healthState === "loading" ? "checking" : healthState === "healthy" ? "healthy" : "unavailable"}
+                {" • "}
+                DB: {healthState === "loading" ? "checking" : systemHealth?.db === "ok" ? "healthy" : "unavailable"}
+              </span>
             </div>
           </div>
         </footer>

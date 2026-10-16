@@ -5,7 +5,7 @@ These define the exact JSON shape the frontend receives.
 Using strict models ensures responses are validated before leaving the server.
 """
 from __future__ import annotations
-from typing import Any
+from typing import Any, Literal
 from pydantic import BaseModel
 
 
@@ -14,6 +14,7 @@ from pydantic import BaseModel
 class DataPoint(BaseModel):
     period: str           # '2021', 'FY25', '2024-08', etc.
     value: float | None   # None → displayed as '—' in UI
+    classification: Literal["actual", "estimate", "projection"] | None = None
 
 
 class Series(BaseModel):
@@ -30,6 +31,7 @@ class SummaryItem(BaseModel):
     change: float | None  # YOY or period-over-period change
     change_unit: str      # 'pp' (percentage points), '%', 'abs'
     is_increase: bool | None  # True = green ▲, False = red ▼, None = neutral
+    classification: Literal["actual", "estimate", "projection"] | None = None
 
 
 class IndicatorResponse(BaseModel):
@@ -37,7 +39,7 @@ class IndicatorResponse(BaseModel):
     title: str
     source: str
     source_url: str | None
-    as_of: str            # ISO date string (observation date of latest data)
+    as_of: str            # latest observation date or annual period label, depending on source
     fetched_at: str       # ISO datetime when backend last fetched
     is_stale: bool        # True → show stale badge in UI
     series: list[Series]
@@ -56,7 +58,9 @@ class TickerItem(BaseModel):
     is_up: bool | None    # True = green, False = red
     source: str
     fetched_at: str
+    observation_date: str | None = None
     is_stale: bool
+    status: Literal["fresh", "delayed", "stale", "unavailable"] = "unavailable"
 
 
 class TickerResponse(BaseModel):

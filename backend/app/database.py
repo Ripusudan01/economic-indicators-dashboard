@@ -103,9 +103,13 @@ def init_db() -> None:
     schema_sql = schema_path.read_text(encoding="utf-8")
     conn = get_connection()
     conn.executescript(schema_sql)
-    # Additive migration for databases created before ticker stale-state tracking.
+    # Additive migrations for databases created before ticker status metadata.
     ticker_columns = {row["name"] for row in conn.execute("PRAGMA table_info(ticker_snapshots)")}
     if "is_stale" not in ticker_columns:
         # Existing quotes predate the stale flag, so their freshness cannot be assumed.
         conn.execute("ALTER TABLE ticker_snapshots ADD COLUMN is_stale INTEGER NOT NULL DEFAULT 1")
+    if "observation_date" not in ticker_columns:
+        # A prior fetch time does not prove when Yahoo observed the quote.
+        conn.execute("ALTER TABLE ticker_snapshots ADD COLUMN observation_date TEXT")
+        conn.execute("UPDATE ticker_snapshots SET is_stale=1")
     conn.commit()

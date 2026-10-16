@@ -100,17 +100,48 @@ def test_production_settings_reject_weak_key_and_http_origins():
     from app.config import Settings
 
     with pytest.raises(ValueError):
-        Settings(app_env="production", cors_origins="https://dashboard.example.com")
+        Settings(
+            _env_file=None,
+            app_env="production",
+            jwt_secret_key="CHANGE_ME_IN_PRODUCTION",
+            cors_origins="https://dashboard.example.com",
+            evaluator_username="evaluator",
+            evaluator_password="TestStrong_Password123",
+        )
     with pytest.raises(ValueError):
         Settings(
+            _env_file=None,
+            app_env="production",
+            jwt_secret_key="x" * 32,
+            cors_origins="https://dashboard.example.com",
+            evaluator_username="evaluator",
+            evaluator_password=None,
+        )
+    with pytest.raises(ValueError):
+        Settings(
+            _env_file=None,
+            app_env="production",
+            jwt_secret_key="x" * 32,
+            cors_origins="https://dashboard.example.com",
+            evaluator_username="evaluator",
+            evaluator_password="weak",
+        )
+    with pytest.raises(ValueError):
+        Settings(
+            _env_file=None,
             app_env="production",
             jwt_secret_key="x" * 32,
             cors_origins="http://localhost:5173",
+            evaluator_username="evaluator",
+            evaluator_password="TestStrong_Password123",
         )
     Settings(
+        _env_file=None,
         app_env="production",
         jwt_secret_key="x" * 32,
         cors_origins="https://dashboard.example.com",
+        evaluator_username="evaluator",
+        evaluator_password="LongStrong_TestPassword123",
     )
 
 

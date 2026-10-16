@@ -78,6 +78,7 @@ export default function InflationPanel({ data, loading, error, onRetry }) {
       error={error}
       onRetry={onRetry}
       metrics={metrics}
+      hasData={Boolean(data?.series?.some((series) => series.data?.some((point) => point.value !== null)))}
     >
       <div className="chart-legend-row">
         <span className="legend-chip cyan">
